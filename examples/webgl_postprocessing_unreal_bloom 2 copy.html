@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>three.js webgl - postprocessing - unreal bloom selective</title>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0"
+    />
+    <link type="text/css" rel="stylesheet" href="main.css" />
+  </head>
+  <body>
+    <script type="x-shader/x-vertex" id="vertexshader">
+
+      varying vec2 vUv;
+
+      void main() {
+
+      	vUv = uv;
+
+      	gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+
+      }
+    </script>
+
+    <script type="x-shader/x-fragment" id="fragmentshader">
+      #ifdef GL_ES
+        precision mediump float;
+      #endif
+      uniform sampler2D baseTexture;
+      uniform sampler2D bloomTexture;
+      uniform float u_time;
+
+      varying vec2 vUv;
+
+      void main() {
+      	gl_FragColor = ( texture2D( baseTexture, vUv ) + vec4(1.0) * texture2D( bloomTexture, vUv ) );
+
+      }
+    </script>
+
+    <script type="module">
+      import * as THREE from '../build/three.module.js'
+
+      import { GUI } from './jsm/libs/dat.gui.module.js'
+
+      import { OrbitControls } from './jsm/controls/OrbitControls.js'
+      import { EffectComposer } from './jsm/postprocessing/EffectComposer.js'
+      import { RenderPass } from './jsm/postprocessing/RenderPass.js'
+      import { ShaderPass } from './jsm/postprocessing/ShaderPass.js'
+      import { UnrealBloomPass } from './jsm/postprocessing/UnrealBloomPass.js'
+      import { ColladaLoader } from './jsm/loaders/ColladaLoader.js'
+      import { OBJLoader } from './jsm/loaders/OBJLoader.js'
+      import { MTLLoader } from './jsm/loaders/MTLLoader.js'
+
+      var scene, camera, controls
+      var renderer
+      //
+      var ENTIRE_SCENE = 0,
+        BLOOM_SCENE = 1
+
+      var bloomLayer = new THREE.Layers()
+      bloomLayer.set(BLOOM_SCENE)
+
+      var params = {
+        exposure: 0.1,
+        bloomStrength: 2,
+        bloomThreshold: 0,
+        bloomRadius: 0,
+        scene: 'Scene with Glow',
+      }
+
+      var darkMaterial = new THREE.MeshBasicMaterial({ color: '#000000' })
+      var materials = {}
+
+      renderer = new THREE.WebGLRenderer({ antialias: true })
+      renderer.setClearColor(0x000000, 1) //设置背景颜色
+      renderer.setPixelRatio(window.devicePixelRatio)
+      renderer.setSize(window.innerWidth, window.innerHeight)
+      renderer.toneMapping = THREE.ReinhardToneMapping
+      document.body.appendChild(renderer.domElement)
+
+      scene = new THREE.Scene()
+
+      camera = new THREE.PerspectiveCamera(
+        770,
+        window.innerWidth / window.innerHeight,
+        1,
+        200000
+      )
+      camera.position.set(0, 0, 20)
+      camera.lookAt(0, 0, 0)
+
+      var ambient = new THREE.AmbientLight(0x666666)
+      ambient.intensity = 1
+      scene.add(ambient)
+      var point = new THREE.PointLight(0xffffff)
+      point.position.set(400, 900, 600) //点光源位置
+      scene.add(point) //点光源添加到场景中
+      var pointLightHelper = new THREE.PointLightHelper(point, 50)
+      scene.add(pointLightHelper)
+
+      controls = new OrbitControls(camera, renderer.domElement)
+      controls.maxPolarAngle = Math.PI * 0.5
+      controls.minDistance = 1
+      controls.maxDistance = 10000
+      // controls.addEventListener('change', render)
+      // 离屏渲染 不发光
+      var renderScene = new RenderPass(scene, camera)
+      // 发光通道
+      var bloomPass = new UnrealBloomPass(
+        new THREE.Vector2(window.innerWidth, window.innerHeight),
+        1.5,
+        0.4,
+        0.85
+      )
+
+      bloomPass.threshold = params.bloomThreshold
+      bloomPass.strength = params.bloomStrength
+      bloomPass.radius = params.bloomRadius
+
+      var bloomComposer = new EffectComposer(renderer)
+      bloomComposer.renderToScreen = false
+      bloomComposer.addPass(renderScene)
+      bloomComposer.addPass(bloomPass)
+
+      var finalPass = new ShaderPass(
+        new THREE.ShaderMaterial({
+          uniforms: {
+            baseTexture: { value: null },
+            bloomTexture: { value: bloomComposer.renderTarget2.texture },
+          },
+          vertexShader: document.getElementById('vertexshader').textContent,
+          fragmentShader: document.getElementById('fragmentshader').textContent,
+          defines: {},
+        }),
+        'baseTexture'
+      )
+      finalPass.needsSwap = true
+
+      var finalComposer = new EffectComposer(renderer)
+      finalComposer.addPass(renderScene)
+      finalComposer.addPass(finalPass)
+      // let loader = new ColladaLoader()
+      let loader = new OBJLoader()
+      // new MTLLoader().load('./models/my/地图.mtl', (materials) => {
+      // loader.setMaterials(materials)
+      loader.load('./models/my/city.obj', (res) => {
+        // scene.add(res.scene)
+        console.log(res)
+        // res = res.scene
+        res.traverse((item) => {
+          item.material && item.material.dispose()
+          if (item.isMesh && item.name == '挤压') {
+            item.material.color = new THREE.Color(0xe07000)
+          }
+          if (item.isMesh && item.name !== '挤压') {
+            item.material.color = new THREE.Color(0x0043ff)
+          }
+          if (
+            item.isMesh &&
+            ![
+              'Areas_Areas.002',
+              '立方体',
+              'Areas.049_Areas.051',
+              'Areas.050_Areas.052',
+              'Areas.048_Areas.050',
+              'Areas.046_Areas.048',
+              'Areas.047_Areas.049',
+            ].includes(item.name)
+          ) {
+            item.layers.enable(BLOOM_SCENE)
+          }
+        })
+        scene.add(res)
+        render()
+      })
+      // })
+
+      var raycaster = new THREE.Raycaster()
+      var mouse = new THREE.Vector2()
+      window.addEventListener('click', onDocumentMouseClick, true)
+      function onDocumentMouseClick(event) {
+        event.preventDefault()
+        mouse.x = (event.clientX / window.innerWidth) * 2 - 1
+        mouse.y = -(event.clientY / window.innerHeight) * 2 + 1
+        raycaster.setFromCamera(mouse, camera)
+        var intersects = raycaster.intersectObjects(scene.children[3].children)
+        console.log(scene)
+        if (intersects.length > 0) {
+          var object = intersects[0].object
+          console.log(object.name)
+          // render()
+        }
+      }
+
+      function render() {
+        renderBloom(true)
+        finalComposer.render()
+        scene.rotation.y += 0.005
+        requestAnimationFrame(render)
+      }
+
+      function renderBloom(mask) {
+        if (mask === true) {
+          scene.traverse(darkenNonBloomed)
+          bloomComposer.render()
+          scene.traverse(restoreMaterial)
+        } else {
+          //只渲染发光
+          camera.layers.set(BLOOM_SCENE)
+          bloomComposer.render()
+          camera.layers.set(ENTIRE_SCENE)
+        }
+      }
+
+      function darkenNonBloomed(obj) {
+        if (obj.isMesh && bloomLayer.test(obj.layers) === false) {
+          materials[obj.uuid] = obj.material
+          obj.material = darkMaterial
+        }
+      }
+
+      function restoreMaterial(obj) {
+        if (materials[obj.uuid]) {
+          obj.material = materials[obj.uuid]
+          delete materials[obj.uuid]
+        }
+      }
+
+      window.onresize = function () {
+        var width = window.innerWidth
+        var height = window.innerHeight
+
+        camera.aspect = width / height
+        camera.updateProjectionMatrix()
+
+        renderer.setSize(width, height)
+
+        bloomComposer.setSize(width, height)
+        finalComposer.setSize(width, height)
+
+        render()
+      }
+    </script>
+  </body>
+</html>

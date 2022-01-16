@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>使用WebGL绘制一个点</title>
+  </head>
+  <body>
+    <!--canvas标签创建一个宽高均为500像素，背景为蓝色的矩形画布-->
+    <canvas
+      id="webgl"
+      width="600"
+      height="400"
+      style="
+        background-color: #000000;
+        display: block;
+        width: 600px;
+        margin: 0 auto;
+        margin-top: 80px;
+      "
+    ></canvas>
+  </body>
+  <!-- 顶点着色器源码 -->
+  <script id="vertexShader" type="x-shader/x-vertex">
+    attribute vec4 a_Position;
+    attribute vec2 a_TexCoord;
+    varying vec2 v_TexCoord;
+    void main () {
+        gl_Position = a_Position;
+        v_TexCoord = a_TexCoord;
+    }
+  </script>
+  <!-- 片元着色器源码 -->
+  <script id="fragmentShader" type="x-shader/x-fragment">
+    #ifdef GL_ES
+    precision mediump float;
+    #endif
+    uniform sampler2D u_Sampler;
+    uniform float offset;
+    uniform float speed;
+    uniform float time;
+    varying vec2 v_TexCoord;
+    float random (vec2 st) {
+        return fract(sin(dot(st.xy, vec2(12.9898,78.233)))* 43758.5453123);
+    }
+    float randomRange (vec2 standard ,float min, float max) {
+        return min + random(standard) * (max - min);
+    }
+    void main () {
+      // 原图
+        vec4 color = texture2D(u_Sampler, v_TexCoord).rgba;
+      // 位移值放缩 0.0-0.5
+      float maxOffset = offset / 6.0;
+      // 时间计算
+      float cTime = floor(time * speed * 50.0);
+      // 切割图片的最大位移值
+      float maxSplitOffset = offset / 6.0;
+      // 这里我们选择切割10次
+      for (float i = 0.0; i < 10.0; i += 1.0) {
+            // 切割纵向坐标
+            float sliceY = random(vec2(cTime + offset, 1999.0 + float(i)));
+            // 切割高度
+            float sliceH = random(vec2(cTime + offset, 9999.0 + float(i))) * 0.25;
+            // 计算随机横向偏移值
+            float hOffset = randomRange(vec2(cTime + offset, 9625.0 + float(i)), -maxSplitOffset, maxSplitOffset);
+            // 计算最终坐标
+            vec2 splitOff = v_TexCoord; splitOff.x += hOffset; splitOff = fract(splitOff);
+            // 片段如果在切割区间，就偏移区内图像
+            if (v_TexCoord.y > sliceY && v_TexCoord.y < fract(sliceY+sliceH)) {
+            color = texture2D(u_Sampler, splitOff).rgba;
+            }
+      }
+      vec2 texOffset = vec2(randomRange(vec2(cTime + maxOffset, 9999.0), -maxOffset, maxOffset), randomRange(vec2(cTime, 9999.0), -maxOffset, maxOffset));
+      vec2 uvOff = fract(v_TexCoord + texOffset);
+      // rgb随机分离
+      float rnd = random(vec2(cTime, 9999.0));
+      if (rnd < 0.33){
+        color.r = texture2D(u_Sampler, uvOff).r;
+      }else if (rnd < 0.66){
+        color.g = texture2D(u_Sampler, uvOff).g;
+      } else{
+        color.b = texture2D(u_Sampler, uvOff).b;
+      }
+      gl_FragColor = vec4(color.r,color.g,color.b, 1.0);
+      //gl_FragColor = vec4(1.0,0.0,0.0,1.0);
+    }
+  </script>
+
+  <script type="module">
+    import initShaders from './initShaders.js'
+    import getWebGLContext from './getWebGLContext.js'
+    import loadImage from './imgLoader.js'
+    import initVertexBuffers from './initVertexBuffers.js'
+    import initTexture from './initTexture.js'
+
+    let canvas = document.getElementById('webgl')
+    let gl = getWebGLContext(canvas)
+    let vertexShaderSource = document.getElementById('vertexShader').innerText
+    let fragShaderSource = document.getElementById('fragmentShader').innerText
+    let image
+    async function init() {
+      image = await loadImage('./t.png')
+      initShaders(gl, vertexShaderSource, fragShaderSource)
+      initVertexBuffers(gl)
+      initTexture(gl, image)
+
+      // 以当日早上0点为基准
+      let todayDateObj = (() => {
+        let oDate = new Date()
+        oDate.setHours(0, 0, 0, 0)
+        return oDate
+      })()
+      // 获取time位置
+      let uTime = gl.getUniformLocation(gl.program, 'time')
+      // 获取speed位置
+      let uSpeed = gl.getUniformLocation(gl.program, 'speed')
+      let uOffset = gl.getUniformLocation(gl.program, 'offset')
+
+      // 计算差值时间传入
+      let diffTime = (new Date().getTime() - todayDateObj.getTime()) / 1000 // 以秒传入，保留毫秒以实现速度变化
+      // 获取speed位置
+      gl.uniform1f(uTime, diffTime)
+      // 传入默认的speed，0.3
+      gl.uniform1f(uSpeed, 0.1)
+      // 传入默认的offset，0.3
+      gl.uniform1f(uOffset, 0.3)
+      // 设置canvas背景色
+      gl.clearColor(0, 0, 0, 0)
+      // 清空<canvas>
+      gl.clear(gl.COLOR_BUFFER_BIT)
+      // 绘制
+      // gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
+      // 定时循环传入最新的时间以及重新绘制
+      let loop = () => {
+        requestAnimationFrame(() => {
+          diffTime = (new Date().getTime() - todayDateObj.getTime()) / 1000 // 以秒传入，保留毫秒以实现速度变化
+          gl.uniform1f(uTime, diffTime)
+          gl.clearColor(0, 0, 0, 0)
+          gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
+          loop()
+        })
+      }
+      loop()
+    }
+    init()
+  </script>
+</html>
